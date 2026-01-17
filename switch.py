@@ -8,6 +8,7 @@ Last Modified Date: December 9th, 2021
 
 import sys
 from datetime import date, datetime
+import socket
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "switch#.log" # The log file for switches are switch#.log, where # is the id of that switch (i.e. switch0.log, switch1.log). The code for replacing # with a real number has been given to you in the main function.
@@ -101,6 +102,26 @@ def main():
     LOG_FILE = 'switch' + str(my_id) + ".log" 
 
     # Write your code below or elsewhere in this file
+
+    ctrl_host = sys.argv[2]
+    ctrl_port = int(sys.argv[3])
+
+    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock: 
+        
+        sock.bind(('', 0))
+
+        udp_host = socket.gethostname()
+
+        register_msg = f"reg,{my_id}"
+
+        sock.sendto(register_msg.encode(),(ctrl_host,ctrl_port))
+
+        register_request_sent()
+
+        data, addr = sock.recvfrom(1024)
+
+        if data == b"reg_ack":
+            register_response_received()
 
 if __name__ == "__main__":
     main()

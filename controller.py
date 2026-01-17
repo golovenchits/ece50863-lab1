@@ -8,6 +8,7 @@ Last Modified Date: December 9th, 2021
 
 import sys
 from datetime import date, datetime
+import socket
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "Controller.log"
@@ -107,6 +108,22 @@ def write_to_log(log):
         # Write to log
         log_file.writelines(log)
 
+def parse_config(config_file):
+    with open(config_file, "r") as f:
+        lines = f.readlines()
+        num_sw = int(lines[0].rstrip())
+        graph = [[0 for column in range(num_sw)] for row in range(num_sw)]
+        for line in lines[1:]:
+            u, v, dist = line.rstrip().split(" ")
+            u = int(u)
+            v = int(v)
+            dist = int(dist)
+            graph[u][v] = dist
+            graph[v][u] = dist
+
+    return num_sw, graph
+
+
 def main():
     #Check for number of arguments and exit if host/port not provided
     num_args = len(sys.argv)
@@ -115,6 +132,36 @@ def main():
         sys.exit(1)
     
     # Write your code below or elsewhere in this file
+    udp_port = int(sys.argv[1])
+    config = sys.argv[2]
+
+    num_sw, graph = parse_config(config)
+    switches = {}
+    reg_resp = b"reg_ack"
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        udp_host = socket.gethostname()
+        sock.bind((udp_host, udp_port))
+
+        while True:
+            data, addr = sock.recvfrom(1024)
+            if not data:
+                break
+
+            op, sw_id = data.decode().split(',')
+
+            if op == 'reg':
+                register_request_received(sw_id)
+                switches.update({sw_id: addr})
+
+            print(switches)
+
+            if len(switches) == num_sw:
+                for idx in switches:
+                    sock.sendto(reg_resp,switches[idx])
+
+                    register_response_sent(idx)
+
 
 if __name__ == "__main__":
     main()
