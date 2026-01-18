@@ -9,6 +9,8 @@ Last Modified Date: December 9th, 2021
 import sys
 from datetime import date, datetime
 import socket
+from controller import REG_REQ
+from controller import Switch
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "switch#.log" # The log file for switches are switch#.log, where # is the id of that switch (i.e. switch0.log, switch1.log). The code for replacing # with a real number has been given to you in the main function.
@@ -107,21 +109,28 @@ def main():
     ctrl_port = int(sys.argv[3])
 
     with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock: 
-        
         sock.bind(('', 0))
-
         udp_host = socket.gethostname()
 
-        register_msg = f"reg,{my_id}"
-
+        register_msg = f"{my_id} {REG_REQ}"
         sock.sendto(register_msg.encode(),(ctrl_host,ctrl_port))
-
         register_request_sent()
 
         data, addr = sock.recvfrom(1024)
+        
+        lines = data.decode().split("\n")
+        num_neighb = int(lines[0])
+        neighbs = []
+        for line in lines[1:]:
+            n_id, n_addr, n_port = line.split(" ")
+            neighbs.append(Switch(int(n_id), (n_addr, int(n_port))))
 
-        if data == b"reg_ack":
-            register_response_received()
+        for n in neighbs:
+            print(n.id, n.addr)
+
+        register_response_received()
+
+        
 
 if __name__ == "__main__":
     main()

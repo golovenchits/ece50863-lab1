@@ -12,6 +12,8 @@ import socket
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "Controller.log"
+REG_REQ = "Register_Request"
+
 
 # Those are logging functions to help you follow the correct logging standard
 
@@ -111,18 +113,48 @@ def write_to_log(log):
 def parse_config(config_file):
     with open(config_file, "r") as f:
         lines = f.readlines()
-        num_sw = int(lines[0].rstrip())
-        graph = [[0 for column in range(num_sw)] for row in range(num_sw)]
-        for line in lines[1:]:
-            u, v, dist = line.rstrip().split(" ")
-            u = int(u)
-            v = int(v)
-            dist = int(dist)
-            graph[u][v] = dist
-            graph[v][u] = dist
+    num_sw = int(lines[0].rstrip())
+    graph = [[] for sw in range(num_sw)]
+    for line in lines[1:]:
+        u, v, dist = line.rstrip().split(" ")
+        u = int(u)
+        v = int(v)
+        dist = int(dist)
+        try:
+            graph[u].append((v, dist))
+        except:
+            graph[u] = [(v, dist)]
+        try:
+            graph[v].append((u, dist))
+        except:
+            graph[v] = [(u, dist)]
 
     return num_sw, graph
 
+class Switch:
+    def __init__(self, id, addr):
+        self.id = id
+        self.addr = addr
+        self.live = True
+
+def send_register_responses(switches: dict, sock, graph):
+    for idx, sw in switches.items():
+        reg_resp = f"{len(graph[idx])}"
+
+        for nidx in graph[idx]:
+            n_sw = switches[nidx[0]]
+            reg_resp += f"\n{n_sw.id} "
+            if n_sw.live:
+                reg_resp += n_sw.addr[0] + f" {n_sw.addr[1]}"
+
+        print(reg_resp)
+        sock.sendto(reg_resp.encode(),switches[sw.id].addr)
+        register_response_sent(sw.id)
+
+
+def dijkstra(graph):
+    dists = [[] for sw in graph]
+    num_sw = len(dists)
 
 def main():
     #Check for number of arguments and exit if host/port not provided
@@ -136,31 +168,30 @@ def main():
     config = sys.argv[2]
 
     num_sw, graph = parse_config(config)
+    print(graph)
+    dijkstra(graph)
+
     switches = {}
-    reg_resp = b"reg_ack"
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         udp_host = socket.gethostname()
         sock.bind((udp_host, udp_port))
 
-        while True:
+        while len(switches) != num_sw:
             data, addr = sock.recvfrom(1024)
             if not data:
                 break
 
-            op, sw_id = data.decode().split(',')
+            sw_id, op = data.decode().rstrip().split()
+            sw = Switch(int(sw_id), addr)
 
-            if op == 'reg':
-                register_request_received(sw_id)
-                switches.update({sw_id: addr})
+            if op == REG_REQ:
+                register_request_received(sw.id)
+                switches.update({sw.id: sw})
 
             print(switches)
 
-            if len(switches) == num_sw:
-                for idx in switches:
-                    sock.sendto(reg_resp,switches[idx])
-
-                    register_response_sent(idx)
+        send_register_responses(switches, sock, graph)
 
 
 if __name__ == "__main__":
