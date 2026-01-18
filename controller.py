@@ -9,6 +9,7 @@ Last Modified Date: December 9th, 2021
 import sys
 from datetime import date, datetime
 import socket
+import heapq
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "Controller.log"
@@ -152,9 +153,43 @@ def send_register_responses(switches: dict, sock, graph):
         register_response_sent(sw.id)
 
 
-def dijkstra(graph):
-    dists = [[] for sw in graph]
-    num_sw = len(dists)
+def send_routing_update(sock, switches, src_sw, first_hop):
+    resp = str(src_sw.id)
+    for sw in switches.values():
+        resp += f"\n{sw.id} {first_hop[sw.id]}"
+
+    print(resp)
+    sock.sendto(resp.encode(), src_sw.addr)
+
+
+def dijkstra(graph, src):
+    v = len(graph)
+    dist = [9999] * v
+    dist[src] = 0
+    first_hop = [-1] * v
+    first_hop[src] = src
+    pq = [(0, src)]
+
+    while pq:
+        curr_dist, curr_node = heapq.heappop(pq)
+
+        if curr_dist > dist[curr_node]:
+            continue
+
+        for neighbor, w in graph[curr_node]:
+            d = curr_dist + w
+
+            if d < dist[neighbor]:
+                dist[neighbor] = d
+                heapq.heappush(pq, (d, neighbor))
+
+                if curr_node == src:
+                    first_hop[neighbor] = neighbor
+                else:
+                    first_hop[neighbor] = first_hop[curr_node]
+            
+    return dist, first_hop
+
 
 def main():
     #Check for number of arguments and exit if host/port not provided
@@ -169,7 +204,6 @@ def main():
 
     num_sw, graph = parse_config(config)
     print(graph)
-    dijkstra(graph)
 
     switches = {}
 
@@ -192,6 +226,21 @@ def main():
             print(switches)
 
         send_register_responses(switches, sock, graph)
+
+        # Calc shortest paths
+        dists = [[] for sw in graph]
+        first_hops = [[] for sw in graph]
+        num_sw = len(dists)
+        routing_table = []
+        for src in range(num_sw):
+            dists[src], first_hops[src] = (dijkstra(graph, src))
+            for idx, d in enumerate(dists[src]):
+                routing_table.append([src, idx, first_hops[src][idx], d])
+
+        routing_table_update(routing_table)
+
+        for src_sw in switches:
+            send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
 
 
 if __name__ == "__main__":

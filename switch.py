@@ -130,6 +130,19 @@ def main():
 
         register_response_received()
 
+        data, addr = sock.recvfrom(1024)
+
+        lines = data.decode().split("\n")
+        print(lines)
+        if int(lines[0]) != my_id:
+            raise Exception("ID mismatch!")
+        
+        routing_table = []
+        for line in lines[1:]:
+            dest_id, next_hop = line.split(" ")
+            routing_table.append([my_id, int(dest_id), int(next_hop)])
+
+        routing_table_update(routing_table)
         
 
 if __name__ == "__main__":
