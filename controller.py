@@ -208,7 +208,7 @@ def main():
     switches = {}
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        udp_host = socket.gethostname()
+        udp_host = "127.0.0.1"
         sock.bind((udp_host, udp_port))
 
         while len(switches) != num_sw:

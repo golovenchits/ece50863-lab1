@@ -110,7 +110,7 @@ def main():
 
     with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock: 
         sock.bind(('', 0))
-        udp_host = socket.gethostname()
+        udp_host = "127.0.0.1"
 
         register_msg = f"{my_id} {REG_REQ}"
         sock.sendto(register_msg.encode(),(ctrl_host,ctrl_port))
