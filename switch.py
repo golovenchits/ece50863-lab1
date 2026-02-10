@@ -101,10 +101,24 @@ def write_to_log(log):
     
 #     sock.sendto(msg.encode(), ctrl_addr)
 
+def parse_routing_table(data):
+    lines = data.decode().split("\n")
+    print(lines)
+    if int(lines[0]) != my_id:
+        raise Exception("ID mismatch!")
+    
+    res_routing_table = []
+    for line in lines[1:]:
+        dest_id, next_hop = line.split(" ")
+        res_routing_table.append([my_id, int(dest_id), int(next_hop)])
+
+    return res_routing_table
+
 
 neighbs: Dict[int, Switch] = {}       
 
-n_id_fail = None        
+n_id_fail = None   
+my_id = None     
 
 # need to do something about link failure 
 def alive_topology(my_id: int, ctrl_addr: tuple, sock: socket.socket):
@@ -128,8 +142,9 @@ def receive_updates(sock: socket.socket):
         msg = None
         try:
             data, addr = sock.recvfrom(1024)
-            n_id_raw, msg = data.decode().strip().split(" ")
-            n_id = int(n_id_raw)
+            if KEEPALIVE in data.decode():
+                n_id_raw, msg = data.decode().strip().split(" ")
+                n_id = int(n_id_raw)
         except socket.timeout:
             print("All neighbors are dead!")
 
@@ -149,7 +164,9 @@ def receive_updates(sock: socket.socket):
             if not neighbs[n_id].live:
                 neighbs[n_id].live = True
             lock.release()
-
+        else:
+            routing_table = parse_routing_table(data)
+            routing_table_update(routing_table)
 
         keep_looping = False
         for sw in neighbs.values():
@@ -158,26 +175,21 @@ def receive_updates(sock: socket.socket):
                 if time.monotonic() - sw.last_seen > TIMEOUT:
                     lock.acquire()
                     sw.live = False
-                    for conn in routing_table:
-                        if conn[1] == sw.id:
-                            conn[2] = -1
                     lock.release()
                     neighbor_dead(sw.id)
-                    routing_table_update(routing_table)
                     print(f"sw{sw.id} is dead!")
-                    # send topo update to controller here
 
         # if not keep_looping:
         #     return
 
-routing_table = []
+
 
 
 def main():
 
     global LOG_FILE
     global n_id_fail
-    global routing_table
+    global my_id
 
     #Check for number of arguments and exit if host/port not provided
     num_args = len(sys.argv)
@@ -224,15 +236,8 @@ def main():
 
         data, addr = sock.recvfrom(1024)
 
-        lines = data.decode().split("\n")
-        print(lines)
-        if int(lines[0]) != my_id:
-            raise Exception("ID mismatch!")
-        
-        routing_table = []
-        for line in lines[1:]:
-            dest_id, next_hop = line.split(" ")
-            routing_table.append([my_id, int(dest_id), int(next_hop)])
+        routing_table = parse_routing_table(data)
+        print("Routing table : \n" + str(routing_table) + "\n")
 
         routing_table_update(routing_table)
 

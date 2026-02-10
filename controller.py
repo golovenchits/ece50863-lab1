@@ -163,7 +163,7 @@ def send_routing_update(sock, switches, src_sw, first_hop):
     for sw in switches.values():
         resp += f"\n{sw.id} {first_hop[sw.id]}"
 
-    print(resp)
+    print(resp + "\n")
     sock.sendto(resp.encode(), src_sw.addr)
 
 
@@ -268,8 +268,6 @@ def main():
         routing_table_update(routing_table)
         for src_sw in switches:
             send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
-            liveness.update({src_sw: True})
-
         
         sock.settimeout(TIMEOUT)
         prev_liveness = liveness.copy()
@@ -290,7 +288,12 @@ def main():
                     
                     # recompute routing table
                     routing_table, first_hops = compute_topology(graph, liveness)
+                    print(routing_table)
+                    print(first_hops)
                     routing_table_update(routing_table)
+                    for src_sw in switches:
+                        if first_hops[src_sw] != []:
+                            send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
             prev_liveness = liveness.copy()
 
             
