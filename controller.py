@@ -10,10 +10,14 @@ import sys
 from datetime import date, datetime
 import socket
 import heapq
+import time
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "Controller.log"
 REG_REQ = "Register_Request"
+K = 2
+TIMEOUT = 3 * K
+KEEPALIVE = "KEEP_ALIVE"
 
 
 # Those are logging functions to help you follow the correct logging standard
@@ -137,6 +141,7 @@ class Switch:
         self.id = id
         self.addr = addr
         self.live = True
+        self.last_seen = time.monotonic()
 
 def send_register_responses(switches: dict, sock, graph):
     for idx, sw in switches.items():
@@ -162,7 +167,7 @@ def send_routing_update(sock, switches, src_sw, first_hop):
     sock.sendto(resp.encode(), src_sw.addr)
 
 
-def dijkstra(graph, src):
+def dijkstra(graph, src, liveness):
     v = len(graph)
     dist = [9999] * v
     dist[src] = 0
@@ -177,6 +182,8 @@ def dijkstra(graph, src):
             continue
 
         for neighbor, w in graph[curr_node]:
+            if not liveness[neighbor]:
+                continue
             d = curr_dist + w
 
             if d < dist[neighbor]:
@@ -190,6 +197,30 @@ def dijkstra(graph, src):
             
     return dist, first_hop
 
+def parse_topo_update(data):
+    msg = data.decode().split("\n")
+    sw_id = int(msg[0])
+    liveness = {}
+    for line in msg[1:]:
+        n_id, live = line.split(" ")
+        liveness.update({int(n_id): live=="True"})
+
+    return sw_id, liveness
+
+
+def compute_topology(graph, liveness):
+    dists = [[] for sw in graph]
+    first_hops = [[] for sw in graph]
+    num_sw = len(dists)
+    routing_table = []
+    for src in range(num_sw):
+        if not liveness[src]:
+            continue
+        dists[src], first_hops[src] = (dijkstra(graph, src, liveness))
+        for idx, d in enumerate(dists[src]):
+            routing_table.append([src, idx, first_hops[src][idx], d])
+
+    return routing_table, first_hops
 
 def main():
     #Check for number of arguments and exit if host/port not provided
@@ -228,19 +259,41 @@ def main():
         send_register_responses(switches, sock, graph)
 
         # Calc shortest paths
-        dists = [[] for sw in graph]
-        first_hops = [[] for sw in graph]
-        num_sw = len(dists)
-        routing_table = []
-        for src in range(num_sw):
-            dists[src], first_hops[src] = (dijkstra(graph, src))
-            for idx, d in enumerate(dists[src]):
-                routing_table.append([src, idx, first_hops[src][idx], d])
+        liveness = {}
+        for src_sw in switches:
+            liveness.update({src_sw: True})
+
+        routing_table, first_hops = compute_topology(graph, liveness)
 
         routing_table_update(routing_table)
-
         for src_sw in switches:
             send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
+            liveness.update({src_sw: True})
+
+        
+        sock.settimeout(TIMEOUT)
+        prev_liveness = liveness.copy()
+        while(True):
+            try:
+                data, addr = sock.recvfrom(1024)
+            except socket.timeout:
+                print("EVERYTHING IS DEAD!")
+                break
+            sw_id, live_upd = parse_topo_update(data)
+            liveness.update(live_upd)
+            for sw_id in liveness:
+                if prev_liveness[sw_id] != liveness[sw_id]:
+                    if liveness[sw_id]:
+                        topology_update_switch_alive(sw_id)
+                    else:
+                        topology_update_switch_dead(sw_id)
+                    
+                    # recompute routing table
+                    routing_table, first_hops = compute_topology(graph, liveness)
+                    routing_table_update(routing_table)
+            prev_liveness = liveness.copy()
+
+            
 
 
 if __name__ == "__main__":

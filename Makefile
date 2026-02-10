@@ -1,4 +1,4 @@
-PORT=3000
+PORT=3006
 HOST=127.0.0.1
 
 clean:

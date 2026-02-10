@@ -9,11 +9,15 @@ Last Modified Date: December 9th, 2021
 import sys
 from datetime import date, datetime
 import socket
-from controller import REG_REQ
-from controller import Switch
+from controller import REG_REQ, Switch, K, TIMEOUT, KEEPALIVE
+import threading
+import time
+from typing import List, Dict
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "switch#.log" # The log file for switches are switch#.log, where # is the id of that switch (i.e. switch0.log, switch1.log). The code for replacing # with a real number has been given to you in the main function.
+
+lock = threading.Lock()
 
 # Those are logging functions to help you follow the correct logging standard
 
@@ -90,9 +94,90 @@ def write_to_log(log):
         # Write to log
         log_file.writelines(log)
 
+# def send_topo_update(my_id: int, ctrl_addr: tuple, sock: socket.socket):
+#     msg = f"{my_id}"
+#     for sw in neighbs.values():
+#         msg += f"\n{sw.id} {sw.live}"
+    
+#     sock.sendto(msg.encode(), ctrl_addr)
+
+
+neighbs: Dict[int, Switch] = {}       
+
+n_id_fail = None        
+
+# need to do something about link failure 
+def alive_topology(my_id: int, ctrl_addr: tuple, sock: socket.socket):
+    while(True):
+        topology_update_msg = f"{my_id}"
+        keep_looping = False
+        for n_sw in neighbs.values():
+            topology_update_msg += f"\n{n_sw.id} {n_sw.live}"
+            if n_sw.live:
+                keep_looping = True
+                sock.sendto(f"{my_id} {KEEPALIVE}".encode(), n_sw.addr)
+                print(f"sending alive to sw{n_sw.id}")
+        # if not keep_looping:
+        #     return
+        sock.sendto(topology_update_msg.encode(), ctrl_addr)
+        time.sleep(K)
+
+def receive_updates(sock: socket.socket):
+    sock.settimeout(TIMEOUT)
+    while(True):
+        msg = None
+        try:
+            data, addr = sock.recvfrom(1024)
+            n_id_raw, msg = data.decode().strip().split(" ")
+            n_id = int(n_id_raw)
+        except socket.timeout:
+            print("All neighbors are dead!")
+
+        # Link failure simulation
+        # if n_id == n_id_fail:
+        #     print(f"link failure with sw{n_id_fail}!")
+        #     try:
+        #         del neighbs[n_id_fail]
+        #     except KeyError:
+        #         pass
+        #     continue
+        
+        if msg == KEEPALIVE:
+            print(f"sw{n_id} is alive")
+            lock.acquire()
+            neighbs[n_id].last_seen = time.monotonic()
+            if not neighbs[n_id].live:
+                neighbs[n_id].live = True
+            lock.release()
+
+
+        keep_looping = False
+        for sw in neighbs.values():
+            if sw.live:
+                keep_looping = True
+                if time.monotonic() - sw.last_seen > TIMEOUT:
+                    lock.acquire()
+                    sw.live = False
+                    for conn in routing_table:
+                        if conn[1] == sw.id:
+                            conn[2] = -1
+                    lock.release()
+                    neighbor_dead(sw.id)
+                    routing_table_update(routing_table)
+                    print(f"sw{sw.id} is dead!")
+                    # send topo update to controller here
+
+        # if not keep_looping:
+        #     return
+
+routing_table = []
+
+
 def main():
 
     global LOG_FILE
+    global n_id_fail
+    global routing_table
 
     #Check for number of arguments and exit if host/port not provided
     num_args = len(sys.argv)
@@ -100,6 +185,14 @@ def main():
         print ("switch.py <Id_self> <Controller hostname> <Controller Port>\n")
         sys.exit(1)
 
+    if '-f' in sys.argv:
+        link_fail = True
+        n_id_fail = int(sys.argv[5])
+    else:
+        link_fail = False
+        n_id_fail = None
+
+    print(link_fail, n_id_fail)
     my_id = int(sys.argv[1])
     LOG_FILE = 'switch' + str(my_id) + ".log" 
 
@@ -120,12 +213,11 @@ def main():
         
         lines = data.decode().split("\n")
         num_neighb = int(lines[0])
-        neighbs = []
         for line in lines[1:]:
             n_id, n_addr, n_port = line.split(" ")
-            neighbs.append(Switch(int(n_id), (n_addr, int(n_port))))
+            neighbs.update({int(n_id): Switch(int(n_id), (n_addr, int(n_port)))})
 
-        for n in neighbs:
+        for n in neighbs.values():
             print(n.id, n.addr)
 
         register_response_received()
@@ -143,6 +235,17 @@ def main():
             routing_table.append([my_id, int(dest_id), int(next_hop)])
 
         routing_table_update(routing_table)
+
+        print(neighbs)
+
+        athread = threading.Thread(target=alive_topology, args=(my_id, (ctrl_host, ctrl_port), sock,))
+        rthread = threading.Thread(target=receive_updates, args=(sock,))
+
+        athread.start()
+        rthread.start()
+
+        athread.join()
+        rthread.join()
         
 
 if __name__ == "__main__":
