@@ -163,11 +163,10 @@ def send_routing_update(sock, switches, src_sw, first_hop):
     for sw in switches.values():
         resp += f"\n{sw.id} {first_hop[sw.id]}"
 
-    print(resp + "\n")
     sock.sendto(resp.encode(), src_sw.addr)
 
 
-def dijkstra(graph, src, liveness):
+def dijkstra(graph, src, liveness, link_liveness):
     v = len(graph)
     dist = [9999] * v
     dist[src] = 0
@@ -182,7 +181,7 @@ def dijkstra(graph, src, liveness):
             continue
 
         for neighbor, w in graph[curr_node]:
-            if not liveness[neighbor]:
+            if not liveness[neighbor] or not link_liveness[(curr_node, neighbor)]:
                 continue
             d = curr_dist + w
 
@@ -208,7 +207,7 @@ def parse_topo_update(data):
     return sw_id, liveness
 
 
-def compute_topology(graph, liveness):
+def compute_topology(graph, liveness, link_liveness):
     dists = [[] for sw in graph]
     first_hops = [[] for sw in graph]
     num_sw = len(dists)
@@ -216,11 +215,12 @@ def compute_topology(graph, liveness):
     for src in range(num_sw):
         if not liveness[src]:
             continue
-        dists[src], first_hops[src] = (dijkstra(graph, src, liveness))
+        dists[src], first_hops[src] = (dijkstra(graph, src, liveness, link_liveness))
         for idx, d in enumerate(dists[src]):
             routing_table.append([src, idx, first_hops[src][idx], d])
 
     return routing_table, first_hops
+
 
 def main():
     #Check for number of arguments and exit if host/port not provided
@@ -263,7 +263,12 @@ def main():
         for src_sw in switches:
             liveness.update({src_sw: True})
 
-        routing_table, first_hops = compute_topology(graph, liveness)
+        link_liveness = {}
+        for sw_id, sw in switches.items():
+            for n_id, _ in graph[sw_id]:
+                link_liveness.update({(sw_id, n_id): True})
+
+        routing_table, first_hops = compute_topology(graph, liveness, link_liveness)
 
         routing_table_update(routing_table)
         for src_sw in switches:
@@ -277,24 +282,67 @@ def main():
             except socket.timeout:
                 print("EVERYTHING IS DEAD!")
                 break
+
             sw_id, live_upd = parse_topo_update(data)
-            liveness.update(live_upd)
-            for sw_id in liveness:
-                if prev_liveness[sw_id] != liveness[sw_id]:
-                    if liveness[sw_id]:
-                        topology_update_switch_alive(sw_id)
+            for n_id, live in live_upd.items():
+                if live != link_liveness[(sw_id, n_id)]:
+                    link_liveness[(sw_id, n_id)] = live
+                    link_liveness[(n_id, sw_id)] = live
+
+                    if not live:
+                        print("link dead between sw", sw_id, "and sw", n_id)
+                        topology_update_link_dead(sw_id, n_id)
+                        routing_table, first_hops = compute_topology(graph, liveness, link_liveness)
+                        routing_table_update(routing_table)
+                        for src_sw in switches:
+                            if first_hops[src_sw] != []:
+                                send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
+            
+            print(link_liveness)
+
+            for idx, live in liveness.items():
+                for src, dst in link_liveness:
+                    if src == idx or dst == idx:
+                        if link_liveness[(src, dst)]:
+                            live = True
+                            break
+                        else:
+                            live = False
+                print("live", idx, live)
+                if live != liveness[idx]:
+                    liveness[idx] = live
+                    if not live:
+                        print("sw", idx, "is dead")
+                        topology_update_switch_dead(idx)
                     else:
-                        topology_update_switch_dead(sw_id)
-                    
-                    # recompute routing table
-                    routing_table, first_hops = compute_topology(graph, liveness)
-                    print(routing_table)
-                    print(first_hops)
+                        print("sw", idx, "is alive")
+                        topology_update_switch_alive(idx)
+
+                    routing_table, first_hops = compute_topology(graph, liveness, link_liveness)
                     routing_table_update(routing_table)
                     for src_sw in switches:
                         if first_hops[src_sw] != []:
                             send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
-            prev_liveness = liveness.copy()
+                liveness[idx] = live
+                        
+        
+            # liveness.update(live_upd)
+            # for sw_id in liveness:
+            #     if prev_liveness[sw_id] != liveness[sw_id]:
+            #         if liveness[sw_id]:
+            #             topology_update_switch_alive(sw_id)
+            #         else:
+            #             topology_update_switch_dead(sw_id)
+                    
+            #         # recompute routing table
+            #         routing_table, first_hops = compute_topology(graph, liveness, link_liveness)
+            #         # print(routing_table)
+            #         # print(first_hops)
+            #         routing_table_update(routing_table)
+            #         for src_sw in switches:
+            #             if first_hops[src_sw] != []:
+            #                 send_routing_update(sock, switches, switches[src_sw], first_hops[src_sw])
+            # prev_liveness = liveness.copy()
 
             
 

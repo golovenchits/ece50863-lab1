@@ -127,12 +127,13 @@ def alive_topology(my_id: int, ctrl_addr: tuple, sock: socket.socket):
         keep_looping = False
         for n_sw in neighbs.values():
             topology_update_msg += f"\n{n_sw.id} {n_sw.live}"
-            if n_sw.live:
+            if n_sw.live and n_sw.id != n_id_fail:
                 keep_looping = True
                 sock.sendto(f"{my_id} {KEEPALIVE}".encode(), n_sw.addr)
                 print(f"sending alive to sw{n_sw.id}")
         # if not keep_looping:
         #     return
+        print("sending topo update to ctrl")
         sock.sendto(topology_update_msg.encode(), ctrl_addr)
         time.sleep(K)
 
@@ -148,16 +149,8 @@ def receive_updates(sock: socket.socket):
         except socket.timeout:
             print("All neighbors are dead!")
 
-        # Link failure simulation
-        # if n_id == n_id_fail:
-        #     print(f"link failure with sw{n_id_fail}!")
-        #     try:
-        #         del neighbs[n_id_fail]
-        #     except KeyError:
-        #         pass
-        #     continue
         
-        if msg == KEEPALIVE:
+        if msg == KEEPALIVE and n_id != n_id_fail:
             print(f"sw{n_id} is alive")
             lock.acquire()
             neighbs[n_id].last_seen = time.monotonic()
@@ -168,6 +161,7 @@ def receive_updates(sock: socket.socket):
             routing_table = parse_routing_table(data)
             routing_table_update(routing_table)
 
+        # Check liveness of all neighbors
         keep_looping = False
         for sw in neighbs.values():
             if sw.live:
